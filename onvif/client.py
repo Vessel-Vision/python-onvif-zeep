@@ -117,7 +117,11 @@ class ONVIFService(object):
         self.encrypt = encrypt
         self.daemon = daemon
         self.dt_diff = dt_diff
+        self.get_type = lambda x: self.zeep_client.get_type('ns0:' + x)
+        # FIXME: Also initializes the object, but does not work for nested objects -- Use the recursive functions
         self.create_type = lambda x: self.zeep_client.get_element('ns0:' + x)()
+        self.create_element = lambda x: self.zeep_client.get_element('ns0:' + x)()
+        self.get_element = lambda x: self.zeep_client.get_element('ns0:' + x)
 
     @classmethod
     @safe_func
