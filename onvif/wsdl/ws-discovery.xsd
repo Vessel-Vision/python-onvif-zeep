@@ -60,7 +60,7 @@ No other rights are granted by implication, estoppel or otherwise.
 
   <xs:import
       namespace="http://schemas.xmlsoap.org/ws/2004/08/addressing"
-      schemaLocation="http://schemas.xmlsoap.org/ws/2004/08/addressing" />
+      schemaLocation="./addressing" />
 
   <!-- //////////////////// Discovery Messages //////////////////// -->
 

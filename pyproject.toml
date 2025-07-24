@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onvif"
+version = "0.0.1"
+description = "ONVIF client library"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.7"
+
+dependencies = ["zeep>=3.0.0"]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["onvif"]
+
+[tool.setuptools.package-data]
+# Include the version file and anything else inside the onvif package
+"onvif" = ["wsdl/**/*"]

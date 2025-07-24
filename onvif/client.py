@@ -9,7 +9,7 @@ from zeep.client import Client, CachingClient, Settings
 from zeep.wsse.username import UsernameToken
 import zeep.helpers
 
-from onvif.exceptions import ONVIFError
+from onvif.exceptions import ONVIFError, ServiceNotSupported, WSDLFileNotFound
 from onvif.definition import SERVICES
 
 logger = logging.getLogger('onvif')
@@ -90,6 +90,7 @@ class ONVIFService(object):
 
         self.url = url
         self.xaddr = xaddr
+        self.binding_name = binding_name
         wsse = UsernameDigestTokenDtDiff(user, passwd, dt_diff=dt_diff, use_digest=encrypt)
         # Create soap client
         if not zeep_client:
@@ -157,6 +158,20 @@ class ONVIFService(object):
                 return call(params, callback)
         return wrapped
 
+    def __repr__(self):
+        output_str = ""
+        output_str += f"<ONVIFService at {hex(id(self))}>\n"
+        output_str += (
+            f"\txaddr        : {self.xaddr}\n"
+            f"\twsdl         : {self.url}\n"
+            f"\tbinding name : {self.binding_name}\n"
+            f"\tuser         : {self.user}\n"
+            f"\tpasswd       : {self.passwd}\n"
+            f"\tencrypt      : {self.encrypt}\n"
+            f"\tdaemon       : {self.daemon}"
+        )
+        return output_str
+
     def __getattr__(self, name):
         """
         Call the real onvif Service operations,
@@ -197,7 +212,7 @@ class ONVIFCamera(object):
                              'imaging': True, 'events': True, 'analytics': True}
 
     def __init__(self, host, port, user, passwd,
-                 wsdl_dir=os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                 wsdl_dir=os.path.join(os.path.dirname(__file__),
                                        "wsdl"),
                  encrypt=True, daemon=False, no_cache=False, adjust_time=False, event_pullpoint=True,
                  transport=None):
@@ -235,38 +250,59 @@ class ONVIFCamera(object):
             self.dt_diff = cam_date - dt.datetime.utcnow()
             self.devicemgmt.dt_diff = self.dt_diff
             self.devicemgmt = self.create_devicemgmt_service()
+
         # Get XAddr of services on the device
-        self.xaddrs = {}
-        capabilities = self.devicemgmt.GetCapabilities({'Category': 'All'})
-        for name in capabilities:
-            try:
-                retrived_address=capabilities[name].XAddr
-                right=retrived_address.split("//")[1]
-                retrived_url=right.split("/")[0]
-                ip_address=retrived_url.split(":")[0]
-                port_address = retrived_url.split(":")[1]
-                if (self.host != ip_address or self.port != port_address):
-                    remaining=right.split("/")[1]
-                    new_address="http://"+self.host+":"+str(self.port)+"/"+right.split("/")[1]+"/"+right.split("/")[2]
-                    capabilities[name].XAddr=new_address
-            except:
-                pass
-            capability = capabilities[name]
-            try:
-                if name.lower() in SERVICES and capability is not None:
-                    ns = SERVICES[name.lower()]['ns']
-                    self.xaddrs[ns] = capability['XAddr']
-            except Exception:
-                logger.exception('Unexpected service type')
+        self.ns_xaddr_map = self.generate_xaddr_ns_map()
+        print(self.ns_xaddr_map)
+        # self.ns_xaddr_map = {}
+        # capabilities = self.devicemgmt.GetCapabilities({'Category': 'All'})
+        # for name in capabilities:
+        #     try:
+        #         retrived_address=capabilities[name].XAddr
+        #         right=retrived_address.split("//")[1]
+        #         retrived_url=right.split("/")[0]
+        #         ip_address=retrived_url.split(":")[0]
+        #         port_address = retrived_url.split(":")[1]
+        #         if (self.host != ip_address or self.port != port_address):
+        #             remaining=right.split("/")[1]
+        #             new_address="http://"+self.host+":"+str(self.port)+"/"+right.split("/")[1]+"/"+right.split("/")[2]
+        #             capabilities[name].XAddr=new_address
+        #     except:
+        #         pass
+        #     capability = capabilities[name]
+        #     try:
+        #         if name.lower() in SERVICES and capability is not None:
+        #             ns = SERVICES[name.lower()]['ns']
+        #             self.ns_xaddr_map[ns] = capability['XAddr']
+        #     except Exception:
+        #         logger.exception('Unexpected service type')
 
         with self.services_lock:
             try:
                 self.event = self.create_events_service()
                 if self.event_pullpoint:
-                    self.xaddrs['http://www.onvif.org/ver10/events/wsdl/PullPointSubscription'] = \
+                    self.ns_xaddr_map['http://www.onvif.org/ver10/events/wsdl/PullPointSubscription'] = \
                         self.event.CreatePullPointSubscription().SubscriptionReference.Address._value_1
             except Exception:
                 pass
+
+    def generate_xaddr_ns_map(self) -> dict[str, str]:
+        """Generate a dictionary mapping namespaces to their respective XAddrs (addresses on the devices)"""
+        # Send a GetServices request to the device and parse the response
+        request = self.devicemgmt.create_type("GetServices")
+        request.IncludeCapability = False
+        response = self.devicemgmt.GetServices(request)
+        
+        xaddr_ns_map: dict[str, str] = {}
+        try:
+            for r in response:
+                ns = r.Namespace
+                xaddr = r.XAddr
+                xaddr_ns_map[ns] = xaddr
+            return xaddr_ns_map
+        except Exception as e:
+            logging.error("Failed to obtain any services xaddress from %s:%s", self.host, self.port, exc_info=True)
+            return {}
 
     def update_url(self, host=None, port=None):
         changed = False
@@ -309,7 +345,7 @@ class ONVIFCamera(object):
 
         wsdlpath = os.path.join(self.wsdl_dir, wsdl_file)
         if not os.path.isfile(wsdlpath):
-            raise ONVIFError('No such file: %s' % wsdlpath)
+            raise WSDLFileNotFound(wsdl_file)
 
         # XAddr for devicemgmt is fixed:
         if name == 'devicemgmt':
@@ -319,13 +355,13 @@ class ONVIFCamera(object):
             return xaddr, wsdlpath, binding_name
 
         # Get other XAddr
-        xaddr = self.xaddrs.get(ns)
+        xaddr = self.ns_xaddr_map.get(ns)
         if not xaddr:
-            raise ONVIFError("Device doesn't support service: %s" % name)
+            raise ServiceNotSupported(name)
 
         return xaddr, wsdlpath, binding_name
 
-    def create_onvif_service(self, name, portType=None, transport=None):
+    def create_onvif_service(self, name, portType=None, transport=None) -> ONVIFService:
         """
         Create ONVIF service client.
 
@@ -335,8 +371,6 @@ class ONVIFCamera(object):
         :param transport:
         :return:
         """
-        """Create ONVIF service client"""
-
         name = name.lower()
         xaddr, wsdl_file, binding_name = self.get_definition(name, portType)
 
@@ -359,47 +393,50 @@ class ONVIFCamera(object):
 
         return service
 
-    def create_devicemgmt_service(self, transport=None):
+    def create_devicemgmt_service(self, transport=None) -> ONVIFService:
         # The entry point for devicemgmt service is fixed.
         return self.create_onvif_service('devicemgmt', transport=transport)
 
-    def create_media_service(self, transport=None):
+    def create_media10_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('media', transport=transport)
 
-    def create_ptz_service(self, transport=None):
+    def create_media20_service(self, transport=None) -> ONVIFService:
+        return self.create_onvif_service('media2', transport=transport)
+
+    def create_ptz_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('ptz', transport=transport)
 
-    def create_imaging_service(self, transport=None):
+    def create_imaging_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('imaging', transport=transport)
 
-    def create_deviceio_service(self, transport=None):
+    def create_deviceio_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('deviceio', transport=transport)
 
-    def create_events_service(self, transport=None):
+    def create_events_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('events', transport=transport)
 
-    def create_analytics_service(self, transport=None):
+    def create_analytics_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('analytics', transport=transport)
 
-    def create_recording_service(self, transport=None):
+    def create_recording_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('recording', transport=transport)
 
-    def create_search_service(self, transport=None):
+    def create_search_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('search', transport=transport)
 
-    def create_replay_service(self, transport=None):
+    def create_replay_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('replay', transport=transport)
 
-    def create_pullpoint_service(self, transport=None):
+    def create_pullpoint_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('pullpoint',
                                          portType='PullPointSubscription',
                                          transport=transport)
 
-    def create_receiver_service(self, transport=None):
+    def create_receiver_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('receiver', transport=transport)
 
-    def create_notification_service(self, transport=None):
+    def create_notification_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('notification', transport=transport)
 
-    def create_subscription_service(self, transport=None):
+    def create_subscription_service(self, transport=None) -> ONVIFService:
         return self.create_onvif_service('subscription', transport=transport)

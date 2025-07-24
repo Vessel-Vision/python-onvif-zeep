@@ -76,7 +76,7 @@ IN NO EVENT WILL THE CORPORATION OR ITS MEMBERS OR THEIR AFFILIATES BE LIABLE FO
 			</xs:element>
 			<xs:element name="GetServiceCapabilitiesResponse">
 				<xs:complexType>
-					<xs:sequence>
+					<xs:sequence>	
 						<xs:element name="Capabilities" type="tds:DeviceServiceCapabilities">
 							<xs:annotation>
 								<xs:documentation>The capabilities for the device service is returned in the Capabilities element.</xs:documentation>
