@@ -13,7 +13,6 @@ from onvif.exceptions import ONVIFError, ServiceNotSupported, WSDLFileNotFound
 from onvif.definition import SERVICES
 
 logger = logging.getLogger('onvif')
-logging.basicConfig(level=logging.INFO)
 logging.getLogger('zeep.client').setLevel(logging.CRITICAL)
 
 
@@ -257,7 +256,7 @@ class ONVIFCamera(object):
 
         # Get XAddr of services on the device
         self.ns_xaddr_map = self.generate_xaddr_ns_map()
-        print(self.ns_xaddr_map)
+        logger.debug("Discovered ONVIF service addresses: %s", self.ns_xaddr_map)
         # self.ns_xaddr_map = {}
         # capabilities = self.devicemgmt.GetCapabilities({'Category': 'All'})
         # for name in capabilities:
